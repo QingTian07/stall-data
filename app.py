@@ -89,9 +89,8 @@ if page == "📝 今日录入":
         _staff_sel = st.selectbox("值班兼职", ["小孔", "亚特", "其他（手填）"], index=0)
         staff = _staff_sel if _staff_sel != "其他（手填）" else st.text_input("兼职姓名", placeholder="输入名字")
     with c3:
-        wage = st.number_input("实付工资（元，没收摊可留空）", min_value=0.0, step=5.0, value=0.0)
-    text = st.text_area("销售内容", height=180,
-                        placeholder="寄居蟹 1 10\n小蛇 8\n两个长柄萝卜塔 50\n损:猫爪剑 1")
+        wage = st.number_input("实付工资（元，没收摊可留空）", min_value=0.0, step=5.0, value=None)
+    text = st.text_area("销售内容", height=180)
     date_str = f"{d.month}月{d.day}日"
 
     if st.button("🔍 解析预览", use_container_width=True, type="primary"):
