@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from openpyxl import load_workbook
-from sync_core import parse_sales_text, resolve, apply_sync, SyncError
+from sync_core import parse_sales_text, resolve, apply_sync, SyncError, parse_stock_text, apply_stock_adjust
 
 INV = "销售、库存、经营分析.xlsx"
 PRICE = "兼职销售登记表、成本利润登记表.xlsx"
@@ -62,6 +62,17 @@ def product_names():
     return names
 
 @st.cache_data(ttl=60, show_spinner=False)
+def all_stock_names():
+    """当前库存全部款名（含未定价款，补货下拉用）"""
+    b = load_wb_bytes(INV)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
+    s = wb["当前库存"]
+    names = [s.cell(row=r, column=3).value for r in range(5, 100)
+             if isinstance(s.cell(row=r, column=3).value, str)]
+    wb.close()
+    return names
+
+@st.cache_data(ttl=60, show_spinner=False)
 def recorded_dates():
     b = load_wb_bytes(INV)
     wb = load_workbook(io.BytesIO(b), read_only=False)
@@ -74,7 +85,7 @@ def recorded_dates():
 
 # ---------------- 页面 ----------------
 st.sidebar.title("🎪 3D打印摊位记账")
-page = st.sidebar.radio("功能", ["📝 今日录入", "📦 当前库存", "🧾 销售记录", "📊 产品分析", "⬇️ 下载Excel"])
+page = st.sidebar.radio("功能", ["📝 今日录入", "📥 补货/调整", "📦 当前库存", "🧾 销售记录", "📊 产品分析", "⬇️ 下载Excel"])
 st.sidebar.caption("数据自动同步保存\n手机可添加到主屏幕当 App 用")
 
 if page == "📝 今日录入":
@@ -153,6 +164,68 @@ if page == "📝 今日录入":
             if rep["unpriced"]:
                 st.caption("未定价不计入统计：" + "、".join(rep["unpriced"]))
             st.session_state.pop("rows")
+
+elif page == "📥 补货/调整":
+    st.title("📥 补货 / 库存调整")
+    st.caption("每行一款：`商品 数量`——正数=补货入库，负数=盘点调减（例：`迷你蛇 20`、`龙蛋 -2`）。简称自动识别。每笔自动记入「库存记录」留痕，不影响销售统计。")
+    c1, c2 = st.columns(2)
+    with c1:
+        d2 = st.date_input("日期", value=date.today(), key="adj_date")
+    with c2:
+        kind = st.selectbox("类型", ["进货", "盘点调整"])
+    note = st.text_input("备注（可选）", placeholder="如：第二批到货")
+    text2 = st.text_area("补货/调整内容", height=160, key="adj_text")
+
+    if st.button("🔍 解析预览", use_container_width=True, type="primary"):
+        names_all = all_stock_names()
+        parsed, problems = parse_stock_text(text2)
+        rows2, probs2 = [], []
+        for it in parsed:
+            std = resolve(it["name"], names_all)
+            if std is None:
+                probs2.append(f"「{it['name']}」没匹配到商品，请在下表手动选择")
+                rows2.append({"商品": it["name"], "数量": it["qty"]})
+            else:
+                if std != it["name"]:
+                    st.info(f"名称映射：{it['name']} → {std}")
+                rows2.append({"商品": std, "数量": it["qty"]})
+        for pmsg in problems + probs2:
+            st.warning(pmsg)
+        st.session_state["adj_rows"] = rows2
+
+    if "adj_rows" in st.session_state and st.session_state["adj_rows"]:
+        st.subheader("核对无误后提交（可下拉改商品名，数量正=补货 负=调减）")
+        df2 = pd.DataFrame(st.session_state["adj_rows"])
+        edited2 = st.data_editor(df2, use_container_width=True, hide_index=True,
+                                 column_config={"商品": st.column_config.SelectboxColumn(
+                                     "商品", options=all_stock_names(), required=True)})
+        if edited2 is not None and not edited2.empty and st.button(
+                "✅ 确认更新库存", type="primary", use_container_width=True):
+            inv_bytes2, inv_sha2 = gh_get(INV)
+            with tempfile.TemporaryDirectory() as td:
+                ip2 = os.path.join(td, "inv2.xlsx")
+                open(ip2, "wb").write(inv_bytes2)
+                items2 = [{"name": r["商品"], "qty": int(r["数量"])}
+                          for _, r in edited2.iterrows()]
+                try:
+                    rep2 = apply_stock_adjust(ip2, f"{d2.month}月{d2.day}日", items2,
+                                              note=note, kind=kind)
+                except SyncError as ex:
+                    st.error(f"失败（未做任何修改）：{ex}")
+                    st.stop()
+                new_bytes2 = open(ip2, "rb").read()
+            try:
+                gh_put(INV, new_bytes2, inv_sha2, f"{kind} {d2} " + "、".join(
+                    f"{n}{q:+d}" for n, q in rep2["stock"].items()))
+            except Exception as ex:
+                st.error(f"⚠️ 本地已更新但写回云端失败：{ex}\n请截图发给摊主，不要重复提交。")
+                st.stop()
+            st.success(f"✅ 已更新：" + "、".join(f"{n} → {q}" for n, q in rep2["stock"].items()))
+            st.cache_data.clear()
+            low = {n: q for n, q in rep2["stock"].items() if q <= 5}
+            if low:
+                st.markdown("⚠️ 仍低于推荐值的：" + "、".join(f"{n}({q})" for n, q in sorted(low.items(), key=lambda x: x[1])))
+            st.session_state.pop("adj_rows")
 
 elif page == "📦 当前库存":
     st.title("📦 当前库存")
