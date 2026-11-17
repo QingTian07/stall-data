@@ -183,14 +183,40 @@ elif page == "🧾 销售记录":
     b = load_wb_bytes(INV)
     wb = load_workbook(io.BytesIO(b), read_only=True)
     d = wb["销售记录"]
+    # 方案工资参数（表右侧 O5..O10：保底/一档上限/一档比例/二档上限/二档比例/三档比例）
+    params = [d.cell(row=5 + i, column=15).value for i in range(6)]
+    import math
+    def _scheme(rev):
+        if rev in (None, ""):
+            return None
+        p0, u1, r1, u2, r2, r3 = params
+        return math.ceil(p0 + min(rev, u1) * r1 + max(0, min(rev, u2) - u1) * r2
+                         + max(0, rev - u2) * r3)
     rows = []
-    for r in range(5, 40):
-        vals = [d.cell(row=r, column=c).value for c in range(2, 13)]
-        if vals[0] and not str(vals[0]).startswith("注"):
-            rows.append(vals)
+    for r in range(6, 40):
+        date_v = d.cell(row=r, column=2).value
+        if not date_v or str(date_v).startswith(("合计", "注")):
+            continue
+        sold = d.cell(row=r, column=4).value or 0
+        dmg = d.cell(row=r, column=5).value or 0
+        rev = d.cell(row=r, column=6).value
+        paid = d.cell(row=r, column=7).value
+        cost = d.cell(row=r, column=10).value
+        sch = _scheme(rev)
+        diff = round(paid - sch, 2) if (paid is not None and sch is not None) else None
+        profit = round(rev - paid - cost, 2) if (rev is not None and paid is not None) else None
+        rows.append([date_v, d.cell(row=r, column=3).value or "—", sold, dmg, rev, paid,
+                     sch, diff, cost, profit, d.cell(row=r, column=12).value or ""])
     wb.close()
     df = pd.DataFrame(rows, columns=["日期", "兼职", "卖出件数", "损坏件数", "营业额", "实付工资",
                                      "方案工资", "差额", "货品成本", "利润", "备注"])
+    if not df.empty:
+        total = {"日期": "合计", "兼职": "", "卖出件数": df["卖出件数"].sum(),
+                 "损坏件数": df["损坏件数"].sum(), "营业额": df["营业额"].sum(),
+                 "实付工资": df["实付工资"].sum(), "方案工资": df["方案工资"].sum(),
+                 "差额": df["差额"].sum(), "货品成本": df["货品成本"].sum(),
+                 "利润": df["利润"].sum(), "备注": ""}
+        df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 elif page == "📊 产品分析":
@@ -201,8 +227,22 @@ elif page == "📊 产品分析":
     hdr = [a.cell(row=5, column=c).value for c in range(2, 17)]
     rows = []
     for r in range(6, 46):
-        if a.cell(row=r, column=3).value:
-            rows.append([a.cell(row=r, column=c).value for c in range(2, 17)])
+        nm = a.cell(row=r, column=3).value
+        if not nm:
+            continue
+        floor_p = a.cell(row=r, column=6).value   # 底价
+        cost = a.cell(row=r, column=7).value      # 成本价
+        sold = a.cell(row=r, column=9).value or 0
+        dmg = a.cell(row=r, column=10).value or 0
+        avg = a.cell(row=r, column=13).value      # 均价
+        rate_cost = round(cost / floor_p, 3) if (cost and floor_p) else None
+        rate_dmg = round(dmg / (sold + dmg), 3) if (sold + dmg) else None
+        margin = round(0.5 - cost / avg, 3) if (cost and avg) else None
+        unit_profit = round(avg * 0.5 - cost, 2) if (cost and avg) else None
+        rows.append([a.cell(row=r, column=2).value, nm, a.cell(row=r, column=4).value,
+                     a.cell(row=r, column=5).value, floor_p, cost, rate_cost,
+                     sold, dmg, rate_dmg, a.cell(row=r, column=12).value, avg,
+                     margin, unit_profit, a.cell(row=r, column=16).value])
     wb.close()
     st.dataframe(pd.DataFrame(rows, columns=hdr), use_container_width=True, hide_index=True)
     st.caption("单件利润=均价×50%−成本（已扣35%提成+15%摊位费）· 未录成本的款利润为空")
