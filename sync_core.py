@@ -265,3 +265,84 @@ def apply_sync(inv_path, price_path, date_str, staff, items, wage=None):
             "amount": amt_sum, "cost": cost_sum, "wage": wage,
             "stock": {nm: stock_names[nm] - q for nm, q in need.items()},
             "unpriced": unpriced}
+
+
+# ---------------- 补货/库存调整 ----------------
+
+def parse_stock_text(text):
+    """补货文本 → [{name, qty}]；每行『商品 数量』，正数补货、负数调减。
+    返回 (items, problems)"""
+    items, problems = {}, []
+    for raw in re.split(r"[\n；;，,、]+", text or ""):
+        line = raw.strip()
+        if not line:
+            continue
+        m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(?:个|件)?\s*$", line)
+        if not m:
+            problems.append(f"「{line}」没认出数量（格式：商品 数量，调减用负数）")
+            continue
+        name = re.sub(r"[+-]?\d+(?:\.\d+)?", "", line)
+        name = re.sub(r"[个件\s\+]+", "", name)
+        if not name:
+            problems.append(f"「{line}」没认出商品名")
+            continue
+        qty = int(float(m.group(1)))
+        t = items.setdefault(name, {"name": name, "qty": 0})
+        t["qty"] += qty
+    return list(items.values()), problems
+
+
+def apply_stock_adjust(inv_path, date_str, entries, note="", kind="进货"):
+    """补货/调整库存：entries=[{name,qty}]（正补负减）。
+    更新当前库存数量 + 在「库存记录」留痕。失败抛 SyncError 不改文件。"""
+    wb = load_workbook(inv_path)
+    stock, hist = wb["当前库存"], wb["库存记录"]
+    names, rows = _stock_map(stock)
+    recs = []
+    for it in entries:
+        nm = it["name"]
+        if nm not in names:
+            raise SyncError(f"商品「{nm}」不在当前库存名单中")
+        q = int(it.get("qty") or 0)
+        if q != 0:
+            recs.append((nm, q))
+    if not recs:
+        raise SyncError("没有可执行的调整（数量都是 0 或为空）")
+    for nm, q in recs:
+        new = names[nm] + q
+        if new < 0:
+            raise SyncError(f"{nm} 调整后为负（{names[nm]}{q:+d}），请核对数量")
+
+    # 扣/加当前库存
+    for nm, q in recs:
+        stock.cell(row=rows[nm], column=5, value=names[nm] + q)
+
+    # 库存记录留痕：插在注行之前（注行有合并，先拆后复位）
+    last = max((r for r in range(6, hist.max_row + 1)
+                if isinstance(hist.cell(row=r, column=3).value, str)), default=5)
+    note_row = next((r for r in range(last + 1, hist.max_row + 1)
+                     if str(hist.cell(row=r, column=2).value or "").startswith("注：")), None)
+    insert_at = note_row if note_row else last + 1
+    unmerged = []
+    if note_row:
+        for m in list(hist.merged_cells.ranges):
+            if m.min_row >= note_row:
+                unmerged.append((m.min_row, m.max_col))
+                hist.unmerge_cells(str(m))
+    hist.insert_rows(insert_at, len(recs))
+    for i, (nm, q) in enumerate(recs):
+        r = insert_at + i
+        for cc in range(2, 9):
+            hist.cell(row=r, column=cc)._style = copy(
+                hist.cell(row=insert_at + len(recs), column=cc)._style
+                if False else hist.cell(row=max(6, insert_at - 1) if insert_at > 6 else 6, column=cc)._style)
+        hist.row_dimensions[r].height = 22
+        rm = f"{kind}" + (f"：{note}" if note else "")
+        for cc, v in zip(range(2, 9), (date_str, nm, q, None, None, "—", rm)):
+            hist.cell(row=r, column=cc, value=v)
+    for min_row, max_col in unmerged:
+        hist.merge_cells(start_row=min_row + len(recs), start_column=2,
+                         end_row=min_row + len(recs), end_column=max_col)
+
+    wb.save(inv_path)
+    return {"stock": {nm: names[nm] + q for nm, q in recs}}
