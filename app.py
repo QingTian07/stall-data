@@ -15,7 +15,7 @@ PRICE = "兼职销售登记表、成本利润登记表.xlsx"
 API = "https://api.github.com/repos"
 
 st.set_page_config(page_title="3D打印摊位记账", page_icon="🎪",
-                   layout="wide", initial_sidebar_progress="expanded")
+                   layout="wide", initial_sidebar_state="expanded")
 
 # ---------------- GitHub 读写 ----------------
 def gh_cfg():
