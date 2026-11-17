@@ -415,8 +415,8 @@ elif page == "🧾 销售记录":
         paid = d.cell(row=r, column=7).value
         cost = d.cell(row=r, column=10).value
         sch = _scheme(rev)
-        diff = round(paid - sch, 2) if (paid is not None and sch is not None) else None
-        profit = round(rev - paid - cost, 2) if (rev is not None and paid is not None) else None
+        diff = round((paid or 0) - sch, 2) if (paid is not None and sch is not None) else None
+        profit = round(rev - (paid or 0) - (cost or 0), 2) if (rev is not None and paid is not None) else None
         rows.append([date_v, d.cell(row=r, column=3).value or "—", sold, dmg, rev, paid,
                      sch, diff, cost, profit, d.cell(row=r, column=12).value or ""])
     wb.close()
