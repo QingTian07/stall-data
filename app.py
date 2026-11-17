@@ -53,7 +53,7 @@ def load_wb_bytes(path):
 def product_names():
     """销售录入表里的定价款（标准名列表）"""
     b = load_wb_bytes(INV)
-    wb = load_workbook(io.BytesIO(b), read_only=True)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
     e = wb["销售录入"]
     names = [e.cell(row=r, column=2).value for r in range(6, 80)
              if isinstance(e.cell(row=r, column=2).value, str)
@@ -64,7 +64,7 @@ def product_names():
 @st.cache_data(ttl=60, show_spinner=False)
 def recorded_dates():
     b = load_wb_bytes(INV)
-    wb = load_workbook(io.BytesIO(b), read_only=True)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
     d = wb["销售记录"]
     out = [d.cell(row=r, column=2).value for r in range(6, 40)
            if isinstance(d.cell(row=r, column=2).value, str)
@@ -158,7 +158,7 @@ if page == "📝 今日录入":
 elif page == "📦 当前库存":
     st.title("📦 当前库存")
     b = load_wb_bytes(INV)
-    wb = load_workbook(io.BytesIO(b), read_only=True)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
     s = wb["当前库存"]
     rows = []
     for r in range(5, 80):
@@ -184,7 +184,7 @@ elif page == "📦 当前库存":
 elif page == "🧾 销售记录":
     st.title("🧾 销售记录")
     b = load_wb_bytes(INV)
-    wb = load_workbook(io.BytesIO(b), read_only=True)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
     d = wb["销售记录"]
     # 方案工资参数（表右侧 O5..O10：保底/一档上限/一档比例/二档上限/二档比例/三档比例）
     params = [d.cell(row=5 + i, column=15).value for i in range(6)]
@@ -226,7 +226,7 @@ elif page == "🧾 销售记录":
 elif page == "📊 产品分析":
     st.title("📊 产品成本率详情（按销量排序）")
     b = load_wb_bytes(INV)
-    wb = load_workbook(io.BytesIO(b), read_only=True)
+    wb = load_workbook(io.BytesIO(b), read_only=False)
     a = wb["产品成本率详情"]
     hdr = [a.cell(row=5, column=c).value for c in range(2, 17)]
     rows = []
