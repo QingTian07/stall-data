@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from openpyxl import load_workbook
-from sync_core import parse_sales_text, resolve, apply_sync, SyncError, parse_stock_text, apply_stock_adjust
+from sync_core import parse_sales_text, resolve, apply_sync, SyncError, parse_stock_text, apply_stock_adjust, undo_last_sync
 
 INV = "销售、库存、经营分析.xlsx"
 PRICE = "兼职销售登记表、成本利润登记表.xlsx"
@@ -164,6 +164,50 @@ if page == "📝 今日录入":
             if rep["unpriced"]:
                 st.caption("未定价不计入统计：" + "、".join(rep["unpriced"]))
             st.session_state.pop("rows")
+
+    with st.expander("↩️ 撤销最近一次录入（误录补救）"):
+        if st.button("查看最近一次录入"):
+            b3 = load_wb_bytes(INV)
+            wb3 = load_workbook(io.BytesIO(b3), read_only=False)
+            d3 = wb3["销售记录"]
+            r_t = next(r for r in range(6, d3.max_row + 1)
+                       if str(d3.cell(row=r, column=2).value or "").startswith("合计"))
+            last_r = max(r for r in range(6, r_t) if d3.cell(row=r, column=2).value)
+            dt = d3.cell(row=last_r, column=2).value
+            l3 = wb3["销售明细"]
+            rows3 = [(l3.cell(row=r, column=3).value, l3.cell(row=r, column=4).value,
+                      l3.cell(row=r, column=5).value) for r in range(6, 60)
+                     if l3.cell(row=r, column=2).value == dt]
+            wb3.close()
+            st.session_state["undo_prev"] = (dt, rows3, d3.cell(row=last_r, column=6).value,
+                                             d3.cell(row=last_r, column=7).value)
+        if "undo_prev" in st.session_state:
+            dt, rows3, amt3, wage3 = st.session_state["undo_prev"]
+            st.warning(f"将撤销 **{dt}** 的全部录入：营业额 {amt3 or 0} 元、工资 {wage3 or 0} 元，"
+                       f"共 {sum(q or 0 for _, q, _ in rows3)} 件（库存会自动加回，统计自动重算）。"
+                       "只能撤销最近一天，更早的找摊主处理。")
+            if st.button(f"✅ 确认撤销 {dt}", type="primary"):
+                inv_b3, inv_sha3 = gh_get(INV)
+                price_b3, _ = gh_get(PRICE)
+                with tempfile.TemporaryDirectory() as td3:
+                    ip3, pp3 = os.path.join(td3, "i3.xlsx"), os.path.join(td3, "p3.xlsx")
+                    open(ip3, "wb").write(inv_b3)
+                    open(pp3, "wb").write(price_b3)
+                    try:
+                        rep3 = undo_last_sync(ip3, pp3)
+                    except SyncError as ex:
+                        st.error(f"撤销失败：{ex}")
+                        st.stop()
+                    nb3 = open(ip3, "rb").read()
+                try:
+                    gh_put(INV, nb3, inv_sha3, f"撤销 {rep3['date']} 录入")
+                except Exception as ex:
+                    st.error(f"本地已撤销但写回云端失败：{ex}，请截图给摊主，不要重复操作。")
+                    st.stop()
+                st.success(f"✅ 已撤销 {rep3['date']}：" + "、".join(
+                    f"{n}+{q}" for n, q in rep3["restored"].items()))
+                st.cache_data.clear()
+                st.session_state.pop("undo_prev")
 
 elif page == "📥 补货/调整":
     st.title("📥 补货 / 库存调整")
