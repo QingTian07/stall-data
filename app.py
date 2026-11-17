@@ -187,7 +187,9 @@ elif page == "🧾 销售记录":
     wb = load_workbook(io.BytesIO(b), read_only=False)
     d = wb["销售记录"]
     # 方案工资参数（表右侧 O5..O10：保底/一档上限/一档比例/二档上限/二档比例/三档比例）
-    params = [d.cell(row=5 + i, column=15).value for i in range(6)]
+    _raw = [d.cell(row=5 + i, column=15).value for i in range(6)]
+    params = [v if v is not None else d0 for v, d0 in
+              zip(_raw, [120, 300, 0.2, 600, 0.25, 0.2])]  # 缺项用默认，避免报错
     import math
     def _scheme(rev):
         if rev in (None, ""):
