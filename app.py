@@ -85,7 +85,9 @@ if page == "📝 今日录入":
     with c1:
         d = st.date_input("日期", value=date.today())
     with c2:
-        staff = st.text_input("值班兼职")
+        # 常用兼职名单（默认小孔；要加人往这里添即可）
+        _staff_sel = st.selectbox("值班兼职", ["小孔", "亚特", "其他（手填）"], index=0)
+        staff = _staff_sel if _staff_sel != "其他（手填）" else st.text_input("兼职姓名", placeholder="输入名字")
     with c3:
         wage = st.number_input("实付工资（元，没收摊可留空）", min_value=0.0, step=5.0, value=0.0)
     text = st.text_area("销售内容", height=180,
