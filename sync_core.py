@@ -443,3 +443,39 @@ def undo_last_sync(inv_path, price_path):
     wb.save(inv_path)
     return {"date": D, "restored": restore,
             "stock_after": {nm: names.get(nm, 0) + q for nm, q in restore.items() if nm in names}}
+
+
+def undo_last_adjust(inv_path):
+    """撤销最近一批库存调整（仅限进货/盘点调整批，历史售出记录不可撤）。
+    数量反向加回，库存记录行清空。失败抛 SyncError 不改文件。"""
+    wb = load_workbook(inv_path)
+    stock, hist = wb["当前库存"], wb["库存记录"]
+    rows = [r for r in range(6, hist.max_row + 1) if isinstance(hist.cell(row=r, column=3).value, str)]
+    if not rows:
+        raise SyncError("库存记录为空")
+    last = rows[-1]
+    D = hist.cell(row=last, column=2).value
+    batch = [r for r in rows if hist.cell(row=r, column=2).value == D]
+    for r in batch:
+        rm = str(hist.cell(row=r, column=8).value or "")
+        if not (rm.startswith("进货") or rm.startswith("盘点调整")):
+            raise SyncError(f"最近一批（{D}）不是进货/盘点调整，不能自动撤销")
+    back = {}
+    for r in batch:
+        nm = hist.cell(row=r, column=3).value
+        q = hist.cell(row=r, column=4).value or 0
+        back[nm] = back.get(nm, 0) - q
+    names, srows = _stock_map(stock)
+    for nm, q in back.items():
+        if nm not in names:
+            raise SyncError(f"{nm} 不在库存名单，中止")
+        if names[nm] + q < 0:
+            raise SyncError(f"{nm} 反向后为负，中止")
+    for nm, q in back.items():
+        stock.cell(row=srows[nm], column=5, value=names[nm] + q)
+    for r in batch:
+        for c in range(2, 9):
+            hist.cell(row=r, column=c).value = None
+    wb.save(inv_path)
+    return {"date": D, "reverted": back,
+            "stock_after": {nm: names[nm] + q for nm, q in back.items()}}
