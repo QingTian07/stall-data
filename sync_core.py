@@ -356,3 +356,90 @@ def apply_stock_adjust(inv_path, date_str, entries, note="", kind="进货"):
 
     wb.save(inv_path)
     return {"stock": {nm: names[nm] + q for nm, q in recs}}
+
+
+def undo_last_sync(inv_path, price_path):
+    """撤销最近一次按日录入：明细清空（保留空行样式）、库存加回、按日行清空、
+    产品成本率详情全量重算。返回撤销摘要；失败抛 SyncError 不改文件。"""
+    wb = load_workbook(inv_path)
+    stock, ledger, daily, entry = wb["当前库存"], wb["销售明细"], wb["销售记录"], wb["销售录入"]
+    cost_map = _cost_map(load_workbook(price_path, read_only=False)["成本利润表"])
+
+    r_total = next(r for r in range(6, daily.max_row + 1)
+                   if str(daily.cell(row=r, column=2).value or "").startswith("合计"))
+    last_day_row = max(r for r in range(6, r_total) if daily.cell(row=r, column=2).value)
+    D = daily.cell(row=last_day_row, column=2).value
+
+    total_l = next(r for r in range(6, ledger.max_row + 1)
+                   if str(ledger.cell(row=r, column=2).value or "").startswith("合计"))
+    rows_D = [r for r in range(6, total_l) if ledger.cell(row=r, column=2).value == D]
+    if not rows_D:
+        raise SyncError(f"销售明细里没有 {D} 的记录，无法撤销")
+
+    restore = {}
+    for r in rows_D:
+        nm = ledger.cell(row=r, column=3).value
+        q = (ledger.cell(row=r, column=4).value or 0) + (ledger.cell(row=r, column=5).value or 0)
+        if isinstance(nm, str):
+            restore[nm] = restore.get(nm, 0) + q
+        for c in range(2, 9):
+            ledger.cell(row=r, column=c).value = None   # 清空不删行（避免合并区错位）
+
+    names, srows = _stock_map(stock)
+    for nm, q in restore.items():
+        if nm in names:
+            stock.cell(row=srows[nm], column=5, value=names[nm] + q)
+
+    for c in range(2, 13):
+        daily.cell(row=last_day_row, column=c).value = None
+
+    # 重算产品成本率详情（与 apply_sync 同逻辑）
+    a = wb["产品成本率详情"]
+    info = {}
+    for r in range(6, 50):
+        nm = a.cell(row=r, column=3).value
+        if isinstance(nm, str) and nm != "兼职工资累计":
+            info[nm] = (a.cell(row=r, column=4).value, a.cell(row=r, column=5).value,
+                        a.cell(row=r, column=6).value)
+    stat = {}
+    for r in range(6, ledger.max_row + 1):
+        if str(ledger.cell(row=r, column=2).value or "").startswith("合计"):
+            break
+        nm = ledger.cell(row=r, column=3).value
+        if not isinstance(nm, str):
+            continue
+        t = stat.setdefault(nm, [0, 0, 0.0])
+        t[0] += ledger.cell(row=r, column=4).value or 0
+        t[1] += ledger.cell(row=r, column=5).value or 0
+        t[2] += ledger.cell(row=r, column=6).value or 0
+    ordered = sorted(info, key=lambda n: (-stat.get(n, [0, 0, 0.0])[0],
+                                          -stat.get(n, [0, 0, 0.0])[2]))
+    for i, nm in enumerate(ordered):
+        r = 6 + i
+        cat, ask, floor_ = info[nm]
+        t = stat.get(nm, [0, 0, 0.0])
+        sold, dmg = t[0], t[1]
+        amt = round(t[2], 2)
+        avg = round(amt / sold, 2) if sold else None
+        vals = ((2, i + 1), (3, nm), (4, cat), (5, ask), (6, floor_),
+                (7, cost_map.get(nm)),
+                (8, f'=IF(OR(F{r}=0,G{r}=0,G{r}=""),"",ROUND(G{r}/F{r},3))'),
+                (9, sold), (10, dmg),
+                (11, f'=IF(I{r}+J{r}=0,"",ROUND(J{r}/(I{r}+J{r}),3))'),
+                (12, amt if amt else None), (13, avg),
+                (14, f'=IF(OR(I{r}=0,M{r}=0,G{r}=0,G{r}=""),"",ROUND(0.5-G{r}/M{r},3))'),
+                (15, f'=IF(OR(I{r}=0,M{r}=0,G{r}=0,G{r}=""),"",ROUND(0.5*M{r}-G{r},2))'),
+                (16, i + 1 if sold > 0 else None))
+        for cc, v in vals:
+            a.cell(row=r, column=cc, value=v)
+    wage_row = next((r for r in range(6 + len(ordered), 60)
+                     if a.cell(row=r, column=2).value == "兼职工资累计"), None)
+    if wage_row:
+        paid = sum(daily.cell(row=r, column=7).value or 0 for r in range(6, 60)
+                   if daily.cell(row=r, column=2).value not in (None, "")
+                   and not str(daily.cell(row=r, column=2).value).startswith(("合计", "注")))
+        a.cell(row=wage_row, column=12, value=round(paid, 2))
+
+    wb.save(inv_path)
+    return {"date": D, "restored": restore,
+            "stock_after": {nm: names.get(nm, 0) + q for nm, q in restore.items() if nm in names}}
