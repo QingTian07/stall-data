@@ -171,6 +171,9 @@ elif page == "📦 当前库存":
                              "备注": s.cell(row=r, column=6).value or ""})
     wb.close()
     df = pd.DataFrame(rows)
+    # 推荐库存/库存列转可空整数，去掉 .0 小数显示
+    for _col in ("推荐库存", "库存（件）"):
+        df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("Int64")
     def hl(row):
         rec, qty = row["推荐库存"], row["库存（件）"]
         return ["background-color:#FFC7CE;color:#9C0006" if isinstance(rec, (int, float))
