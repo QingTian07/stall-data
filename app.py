@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from openpyxl import load_workbook
-from sync_core import parse_sales_text, resolve, apply_sync, SyncError, parse_stock_text, apply_stock_adjust, undo_last_sync
+from sync_core import parse_sales_text, resolve, apply_sync, SyncError, parse_stock_text, apply_stock_adjust, undo_last_sync, undo_last_adjust
 
 INV = "销售、库存、经营分析.xlsx"
 PRICE = "兼职销售登记表、成本利润登记表.xlsx"
@@ -294,8 +294,99 @@ elif page == "📦 当前库存":
         rec, qty = row["推荐库存"], row["库存（件）"]
         return ["background-color:#FFC7CE;color:#9C0006" if isinstance(rec, (int, float))
                 and qty < rec else "" for _ in row]
-    st.dataframe(df.style.apply(hl, axis=1), use_container_width=True, hide_index=True, height=640)
+    st.dataframe(df.style.apply(hl, axis=1), use_container_width=True, hide_index=True, height=560)
     st.caption("红色 = 库存低于推荐值，建议补货")
+
+    # ---- 快捷加减库存：在表里填「调整±」列（+补货 / -调减），确认后生效 ----
+    st.subheader("⚡ 快捷调整库存")
+    st.caption("在下方表格的「调整±」列填数字（正=补货入库，负=调减），点「检查调整」→ 确认后生效。每笔自动记入库存记录。")
+    df_adj = df.copy()
+    df_adj["调整±"] = 0
+    edited3 = st.data_editor(df_adj, use_container_width=True, hide_index=True, key="stock_adj_editor",
+                             column_config={"商品名称": st.column_config.TextColumn(disabled=True),
+                                            "推荐库存": st.column_config.NumberColumn(disabled=True),
+                                            "库存（件）": st.column_config.NumberColumn(disabled=True),
+                                            "备注": st.column_config.TextColumn(disabled=True)})
+    if st.button("🔍 检查调整", use_container_width=True):
+        changes = edited3[edited3["调整±"].fillna(0) != 0]
+        if changes.empty:
+            st.info("没有填任何调整量（「调整±」列全是 0）")
+        else:
+            st.session_state["stock_changes"] = [
+                {"name": r["商品名称"], "qty": int(r["调整±"])} for _, r in changes.iterrows()]
+    if "stock_changes" in st.session_state and st.session_state["stock_changes"]:
+        chs = st.session_state["stock_changes"]
+        st.warning("将调整：" + "、".join(f"{c['name']} {c['qty']:+d}" for c in chs)
+                   + "（正=补货 负=调减，自动记入库存记录）")
+        if st.button("✅ 确认调整", type="primary", use_container_width=True):
+            inv_b4, inv_sha4 = gh_get(INV)
+            with tempfile.TemporaryDirectory() as td4:
+                ip4 = os.path.join(td4, "i4.xlsx")
+                open(ip4, "wb").write(inv_b4)
+                try:
+                    rep4 = apply_stock_adjust(ip4, f"{date.today().month}月{date.today().day}日",
+                                              chs, note="库存页快捷调整", kind="盘点调整")
+                except SyncError as ex:
+                    st.error(f"失败（未做修改）：{ex}")
+                    st.stop()
+                nb4 = open(ip4, "rb").read()
+            try:
+                gh_put(INV, nb4, inv_sha4, "库存页快捷调整 " + "、".join(
+                    f"{n}{q:+d}" for n, q in rep4["stock"].items()))
+            except Exception as ex:
+                st.error(f"本地已更新但写回失败：{ex}，请截图给摊主，不要重复提交。")
+                st.stop()
+            st.success("✅ 已调整：" + "、".join(f"{n} → {q}" for n, q in rep4["stock"].items()))
+            st.cache_data.clear()
+            st.session_state.pop("stock_changes", None)
+            st.rerun()
+
+    with st.expander("↩️ 撤销最近一次库存调整"):
+        if st.button("查看最近一次调整"):
+            b5 = load_wb_bytes(INV)
+            wb5 = load_workbook(io.BytesIO(b5), read_only=False)
+            h5 = wb5["库存记录"]
+            rows5 = [r for r in range(6, h5.max_row + 1)
+                     if isinstance(h5.cell(row=r, column=3).value, str)]
+            if rows5:
+                last5 = rows5[-1]
+                d5 = h5.cell(row=last5, column=2).value
+                batch5 = [(h5.cell(row=r, column=3).value, h5.cell(row=r, column=4).value,
+                           h5.cell(row=r, column=8).value) for r in rows5
+                          if h5.cell(row=r, column=2).value == d5]
+                wb5.close()
+                st.session_state["adj_undo_prev"] = (d5, batch5)
+            else:
+                wb5.close()
+                st.info("库存记录为空")
+        if "adj_undo_prev" in st.session_state:
+            d5, batch5 = st.session_state["adj_undo_prev"]
+            rm_ok = all(str(rm or "").startswith(("进货", "盘点调整")) for _, _, rm in batch5)
+            if not rm_ok:
+                st.info(f"最近一批（{d5}）不是进货/盘点调整（可能是历史记录），不能自动撤销。")
+            else:
+                st.warning(f"将撤销 **{d5}** 的调整：" + "、".join(
+                    f"{n} {q:+d}" for n, q, _ in batch5) + "（数量反向加回）")
+                if st.button(f"✅ 确认撤销 {d5} 的调整", type="primary"):
+                    inv_b6, inv_sha6 = gh_get(INV)
+                    with tempfile.TemporaryDirectory() as td6:
+                        ip6 = os.path.join(td6, "i6.xlsx")
+                        open(ip6, "wb").write(inv_b6)
+                        try:
+                            rep6 = undo_last_adjust(ip6)
+                        except SyncError as ex:
+                            st.error(f"撤销失败：{ex}")
+                            st.stop()
+                        nb6 = open(ip6, "rb").read()
+                    try:
+                        gh_put(INV, nb6, inv_sha6, f"撤销库存调整 {rep6['date']}")
+                    except Exception as ex:
+                        st.error(f"写回失败：{ex}，请截图给摊主。")
+                        st.stop()
+                    st.success("✅ 已撤销：" + "、".join(f"{n}{q:+d}" for n, q in rep6["reverted"].items()))
+                    st.cache_data.clear()
+                    st.session_state.pop("adj_undo_prev", None)
+                    st.rerun()
 
 elif page == "🧾 销售记录":
     st.title("🧾 销售记录")
