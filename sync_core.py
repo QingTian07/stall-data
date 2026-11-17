@@ -63,6 +63,11 @@ def parse_sales_text(text):
         line = raw.strip()
         if not line:
             continue
+        line = re.sub(r"[（(][^（）()]*[）)]", "", line)   # 剥离括号备注
+        line = re.sub(r"[（）()【】\[\]]", "", line)
+        line = line.strip()
+        if not line:
+            continue
         dmg = bool(re.match(r"^损(坏)?[:：\s]", line))
         if dmg:
             line = re.sub(r"^损(坏)?[:：\s]*", "", line)
@@ -275,6 +280,11 @@ def parse_stock_text(text):
     items, problems = {}, []
     for raw in re.split(r"[\n；;，,、]+", text or ""):
         line = raw.strip()
+        if not line:
+            continue
+        line = re.sub(r"[（(][^（）()]*[）)]", "", line)   # 剥离括号备注，如"小剑 20（保留原始）"
+        line = re.sub(r"[（）()【】\[\]]", "", line)      # 清残余括号符号
+        line = line.strip()
         if not line:
             continue
         m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(?:个|件)?\s*$", line)
