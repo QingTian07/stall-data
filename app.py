@@ -417,20 +417,22 @@ elif page == "🧾 销售记录":
         sch = _scheme(rev)
         diff = round((paid or 0) - sch, 2) if (paid is not None and sch is not None) else None
         profit = round(rev - (paid or 0) - (cost or 0), 2) if (rev is not None and paid is not None) else None
+        theo = round(profit - 80, 2) if profit is not None else None   # 理论利润=再扣80摊位费
         rows.append([date_v, d.cell(row=r, column=3).value or "—", sold, dmg, rev, paid,
-                     sch, diff, cost, profit, d.cell(row=r, column=12).value or ""])
+                     sch, diff, cost, profit, theo, d.cell(row=r, column=12).value or ""])
     wb.close()
     df = pd.DataFrame(rows, columns=["日期", "兼职", "卖出件数", "损坏件数", "营业额", "实付工资",
-                                     "方案工资", "差额", "货品成本", "利润", "备注"])
+                                     "方案工资", "差额", "货品成本", "利润", "理论利润", "备注"])
     if not df.empty:
         _r2 = lambda s: round(float(s.fillna(0).sum()), 2)
         total = {"日期": "合计", "兼职": "", "卖出件数": df["卖出件数"].sum(),
                  "损坏件数": df["损坏件数"].sum(), "营业额": _r2(df["营业额"]),
                  "实付工资": _r2(df["实付工资"]), "方案工资": _r2(df["方案工资"]),
                  "差额": _r2(df["差额"]), "货品成本": _r2(df["货品成本"]),
-                 "利润": _r2(df["利润"]), "备注": ""}
+                 "利润": _r2(df["利润"]), "理论利润": _r2(df["理论利润"]), "备注": ""}
         df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
     st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption("利润=营业额−实付工资−货品成本（摊位费未计）· 理论利润=再扣80元/天摊位费")
 
 elif page == "📊 产品分析":
     st.title("📊 产品成本率详情（按销量排序）")
