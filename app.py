@@ -309,48 +309,50 @@ elif page == "📦 当前库存":
     st.caption("红色 = 库存低于推荐值，建议补货")
 
     # ---- 快捷加减库存：在表里填「调整±」列（+补货 / -调减），确认后生效 ----
-    st.subheader("⚡ 快捷调整库存")
-    st.caption("在下方表格的「调整±」列填数字（正=补货入库，负=调减），点「检查调整」→ 确认后生效。每笔自动记入库存记录。")
-    df_adj = df.copy()
-    df_adj["调整±"] = 0
-    edited3 = st.data_editor(df_adj, use_container_width=True, hide_index=True, key="stock_adj_editor",
-                             column_config={"商品名称": st.column_config.TextColumn(disabled=True),
-                                            "推荐库存": st.column_config.NumberColumn(disabled=True),
-                                            "库存（件）": st.column_config.NumberColumn(disabled=True),
-                                            "备注": st.column_config.TextColumn(disabled=True)})
-    if st.button("🔍 检查调整", use_container_width=True):
-        changes = edited3[edited3["调整±"].fillna(0) != 0]
-        if changes.empty:
-            st.info("没有填任何调整量（「调整±」列全是 0）")
-        else:
-            st.session_state["stock_changes"] = [
-                {"name": r["商品名称"], "qty": int(r["调整±"])} for _, r in changes.iterrows()]
-    if "stock_changes" in st.session_state and st.session_state["stock_changes"]:
-        chs = st.session_state["stock_changes"]
-        st.warning("将调整：" + "、".join(f"{c['name']} {c['qty']:+d}" for c in chs)
-                   + "（正=补货 负=调减，自动记入库存记录）")
-        if st.button("✅ 确认调整", type="primary", use_container_width=True):
-            inv_b4, inv_sha4 = gh_get(INV)
-            with tempfile.TemporaryDirectory() as td4:
-                ip4 = os.path.join(td4, "i4.xlsx")
-                open(ip4, "wb").write(inv_b4)
-                try:
-                    rep4 = apply_stock_adjust(ip4, f"{date.today().month}月{date.today().day}日",
-                                              chs, note="库存页快捷调整", kind="盘点调整")
-                except SyncError as ex:
-                    st.error(f"失败（未做修改）：{ex}")
-                    st.stop()
-                nb4 = open(ip4, "rb").read()
+    # ---- 边看边调：选商品 + 快捷加减按钮，一点即生效 ----
+    st.subheader("⚡ 边看边调")
+    st.caption("选商品后点快捷按钮（+1/−1/+10/−10）立即调整，或在数字框用加减号调到想要的量再点应用。每笔自动记入库存记录。")
+    _opts = [f"{row['商品名称']}（现存 {row['库存（件）']}）" for _, row in df.iterrows()]
+    _sel = st.selectbox("商品", _opts, key="adj_sel")
+    _nm = _sel.split("（现存")[0]
+
+    def _do_adjust(qty):
+        if qty == 0:
+            st.warning("调整量为 0")
+            return
+        inv_b, inv_sha = gh_get(INV)
+        with tempfile.TemporaryDirectory() as _td:
+            _ip = os.path.join(_td, "adj.xlsx")
+            open(_ip, "wb").write(inv_b)
             try:
-                gh_put(INV, nb4, inv_sha4, "库存页快捷调整 " + "、".join(
-                    f"{n}{q:+d}" for n, q in rep4["stock"].items()))
-            except Exception as ex:
-                st.error(f"本地已更新但写回失败：{ex}，请截图给摊主，不要重复提交。")
+                rep = apply_stock_adjust(_ip, f"{date.today().month}月{date.today().day}日",
+                                         [{"name": _nm, "qty": qty}],
+                                         note="库存页快捷±", kind="盘点调整")
+            except SyncError as ex:
+                st.error(f"失败（未做修改）：{ex}")
                 st.stop()
-            st.success("✅ 已调整：" + "、".join(f"{n} → {q}" for n, q in rep4["stock"].items()))
-            st.cache_data.clear()
-            st.session_state.pop("stock_changes", None)
-            st.rerun()
+            _nb = open(_ip, "rb").read()
+        try:
+            gh_put(INV, _nb, inv_sha, f"快捷调整 {_nm}{qty:+d}")
+        except Exception as ex:
+            st.error(f"写回云端失败：{ex}，请勿重复点击，截图给摊主。")
+            st.stop()
+        st.toast(f"✅ {_nm} {qty:+d} → 现存 {rep['stock'][_nm]}")
+        st.cache_data.clear()
+        st.rerun()
+
+    _qty = st.number_input("调整量（正=补货 负=调减）", value=0, step=1, key="adj_qty")
+    _c1, _c2, _c3, _c4, _c5 = st.columns(5)
+    if _c1.button("−10", use_container_width=True):
+        _do_adjust(-10)
+    if _c2.button("−1", use_container_width=True):
+        _do_adjust(-1)
+    if _c3.button("+1", use_container_width=True):
+        _do_adjust(1)
+    if _c4.button("+10", use_container_width=True):
+        _do_adjust(10)
+    if _c5.button("✅ 应用", type="primary", use_container_width=True):
+        _do_adjust(int(_qty))
 
     with st.expander("↩️ 撤销最近一次库存调整"):
         if st.button("查看最近一次调整"):
