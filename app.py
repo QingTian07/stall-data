@@ -393,17 +393,6 @@ elif page == "🧾 销售记录":
     b = load_wb_bytes(INV)
     wb = load_workbook(io.BytesIO(b), read_only=False)
     d = wb["销售记录"]
-    # 方案工资参数（表右侧 O5..O10：保底/一档上限/一档比例/二档上限/二档比例/三档比例）
-    _raw = [d.cell(row=5 + i, column=15).value for i in range(6)]
-    params = [v if v is not None else d0 for v, d0 in
-              zip(_raw, [120, 300, 0.2, 600, 0.25, 0.2])]  # 缺项用默认，避免报错
-    import math
-    def _scheme(rev):
-        if rev in (None, ""):
-            return None
-        p0, u1, r1, u2, r2, r3 = params
-        return math.ceil(p0 + min(rev, u1) * r1 + max(0, min(rev, u2) - u1) * r2
-                         + max(0, rev - u2) * r3)
     rows = []
     for r in range(6, 40):
         date_v = d.cell(row=r, column=2).value
@@ -414,21 +403,19 @@ elif page == "🧾 销售记录":
         rev = d.cell(row=r, column=6).value
         paid = d.cell(row=r, column=7).value
         cost = round(rev * 0.2, 2) if rev is not None else None   # 货品成本=营业额×20%（摊主口径）
-        sch = _scheme(rev)
-        diff = round((paid or 0) - sch, 2) if (paid is not None and sch is not None) else None
         profit = round(rev - (paid or 0) - (cost or 0), 2) if (rev is not None and paid is not None) else None
         theo = round(profit - 80, 2) if profit is not None else None   # 理论利润=再扣80摊位费
         rows.append([date_v, d.cell(row=r, column=3).value or "—", sold, dmg, rev, paid,
-                     diff, cost, profit, theo, d.cell(row=r, column=12).value or ""])
+                     cost, profit, theo, d.cell(row=r, column=12).value or ""])
     wb.close()
     df = pd.DataFrame(rows, columns=["日期", "兼职", "卖出件数", "损坏件数", "营业额", "实付工资",
-                                     "差额", "货品成本", "利润", "理论利润", "备注"])
+                                     "货品成本", "利润", "理论利润", "备注"])
     if not df.empty:
         _r2 = lambda s: round(float(s.fillna(0).sum()), 2)
         total = {"日期": "合计", "兼职": "", "卖出件数": df["卖出件数"].sum(),
                  "损坏件数": df["损坏件数"].sum(), "营业额": _r2(df["营业额"]),
                  "实付工资": _r2(df["实付工资"]),
-                 "差额": _r2(df["差额"]), "货品成本": _r2(df["货品成本"]),
+                 "货品成本": _r2(df["货品成本"]),
                  "利润": _r2(df["利润"]), "理论利润": _r2(df["理论利润"]), "备注": ""}
         df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
     st.dataframe(df, use_container_width=True, hide_index=True)
