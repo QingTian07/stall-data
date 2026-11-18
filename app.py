@@ -413,7 +413,7 @@ elif page == "🧾 销售记录":
         dmg = d.cell(row=r, column=5).value or 0
         rev = d.cell(row=r, column=6).value
         paid = d.cell(row=r, column=7).value
-        cost = d.cell(row=r, column=10).value
+        cost = round(rev * 0.2, 2) if rev is not None else None   # 货品成本=营业额×20%（摊主口径）
         sch = _scheme(rev)
         diff = round((paid or 0) - sch, 2) if (paid is not None and sch is not None) else None
         profit = round(rev - (paid or 0) - (cost or 0), 2) if (rev is not None and paid is not None) else None
@@ -432,7 +432,7 @@ elif page == "🧾 销售记录":
                  "利润": _r2(df["利润"]), "理论利润": _r2(df["理论利润"]), "备注": ""}
         df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
     st.dataframe(df, use_container_width=True, hide_index=True)
-    st.caption("利润=营业额−实付工资−货品成本（摊位费未计）· 理论利润=再扣80元/天摊位费")
+    st.caption("货品成本=营业额×20% · 利润=营业额−实付工资−货品成本 · 理论利润=再扣80元/天摊位费")
 
 elif page == "📊 产品分析":
     st.title("📊 产品成本率详情（按销量排序）")
