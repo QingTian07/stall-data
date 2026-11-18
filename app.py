@@ -277,24 +277,35 @@ elif page == "📦 当前库存":
     wb = load_workbook(io.BytesIO(b), read_only=False)
     s = wb["当前库存"]
     rows = []
+    _cat = None
     for r in range(5, 80):
-        if isinstance(s.cell(row=r, column=2).value, int):
-            nm = s.cell(row=r, column=3).value
-            if isinstance(nm, str):
-                rec = s.cell(row=r, column=4).value
-                qty = s.cell(row=r, column=5).value or 0
-                rows.append({"商品名称": nm, "推荐库存": rec, "库存（件）": qty,
-                             "备注": s.cell(row=r, column=6).value or ""})
+        b2v, nm = s.cell(row=r, column=2).value, s.cell(row=r, column=3).value
+        if isinstance(b2v, str) and nm is None:      # 类别标题行
+            _cat = b2v
+        if isinstance(b2v, int) and isinstance(nm, str):
+            rows.append({"类别": _cat or "未分组", "商品名称": nm,
+                         "推荐库存": s.cell(row=r, column=4).value,
+                         "库存（件）": s.cell(row=r, column=5).value or 0,
+                         "备注": s.cell(row=r, column=6).value or ""})
     wb.close()
     df = pd.DataFrame(rows)
     # 推荐库存/库存列转可空整数，去掉 .0 小数显示
     for _col in ("推荐库存", "库存（件）"):
         df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("Int64")
+    # 按系列分组展示（快速定位）
+    _icons = {"龙蛇系列": "🐉", "龙蛋系列": "🥚", "螺旋锥系列": "🌀", "剑刀兵器": "⚔️",
+              "指尖解压": "🎲", "萝卜塔系列": "🗼", "其他/待定价": "📦"}
     def hl(row):
         rec, qty = row["推荐库存"], row["库存（件）"]
         return ["background-color:#FFC7CE;color:#9C0006" if isinstance(rec, (int, float))
                 and qty < rec else "" for _ in row]
-    st.dataframe(df.style.apply(hl, axis=1), use_container_width=True, hide_index=True, height=560)
+    for cat in df["类别"].drop_duplicates():
+        sub = df[df["类别"] == cat].drop(columns=["类别"])
+        low = sum(1 for _, row in sub.iterrows()
+                  if isinstance(row["推荐库存"], (int, float)) and row["库存（件）"] < row["推荐库存"])
+        st.markdown(f"**{_icons.get(cat, '📁')} {cat}**（{len(sub)} 款"
+                    + (f"，⚠️ {low} 款低于推荐" if low else "") + "）")
+        st.dataframe(sub.style.apply(hl, axis=1), use_container_width=True, hide_index=True)
     st.caption("红色 = 库存低于推荐值，建议补货")
 
     # ---- 快捷加减库存：在表里填「调整±」列（+补货 / -调减），确认后生效 ----
