@@ -100,7 +100,12 @@ if page == "📝 今日录入":
         _staff_sel = st.selectbox("值班兼职", ["小孔", "亚特", "其他（手填）"], index=0)
         staff = _staff_sel if _staff_sel != "其他（手填）" else st.text_input("兼职姓名", placeholder="输入名字")
     with c3:
-        wage = st.number_input("实付工资（元，没收摊可留空）", min_value=0.0, step=5.0, value=None)
+        wage = st.number_input("实付工资（元，留空自动按营业额×20%+120）", min_value=0.0, step=5.0, value=None)
+    c4, c5 = st.columns(2)
+    with c4:
+        online = st.number_input("线上收款（元，可选）", min_value=0.0, step=1.0, value=None)
+    with c5:
+        cash = st.number_input("现金收款（元，可选）", min_value=0.0, step=1.0, value=None)
     text = st.text_area("销售内容", height=180)
     date_str = f"{d.month}月{d.day}日"
 
@@ -142,9 +147,10 @@ if page == "📝 今日录入":
                 items = [{"name": r["商品"], "qty": int(r["数量"]),
                           "amt": float(r["金额"]) or None, "dmg": bool(r["损坏"])}
                          for _, r in edited.iterrows()]
+                _auto_wage = round(sum(a for _, _, a, _ in items if a) * 0.2 + 120, 2)
                 try:
                     rep = apply_sync(ip, pp, date_str, staff, items,
-                                     wage=float(wage) if wage else None)
+                                     wage=float(wage) if wage else _auto_wage)
                 except SyncError as ex:
                     st.error(f"同步失败（未做任何修改）：{ex}")
                     st.stop()
@@ -157,6 +163,17 @@ if page == "📝 今日录入":
             st.success(f"✅ 同步完成：{date_str} {rep['staff']} · 售出 {rep['sold']} 件 "
                        f"损坏 {rep['dmg']} 件 · 营业额 {rep['amount']:.0f} 元 · 成本 {rep['cost']:.1f} 元"
                        + (f" · 工资 {rep['wage']:.0f} 元" if rep['wage'] else ""))
+            # 结算文本（一键复制）：提成=营业额×20%+120，线上结算=提成−现金
+            _amt = rep["amount"] or 0
+            _wage_calc = round(_amt * 0.2 + 120, 2)
+            _cash = cash if cash else 0
+            _online = online if online is not None else max(_amt - _cash, 0)
+            _fmt = lambda v: int(v) if float(v) == int(v) else round(v, 2)
+            _msg = (f"{date_str}，线上{_fmt(_online)}，现金{_fmt(_cash)}，"
+                    f"营业额一共{_fmt(_amt)}，提成{_fmt(_wage_calc)}，"
+                    f"去掉现金{_fmt(_cash)}你自己留着，线上结算{_fmt(_wage_calc - _cash)}")
+            st.markdown("**📋 结算文本（点右上角图标一键复制）：**")
+            st.code(_msg, language=None)
             st.cache_data.clear()
             low = {n: q for n, q in rep["stock"].items() if q <= 5}
             if low:
