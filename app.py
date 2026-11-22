@@ -170,7 +170,8 @@ if page == "📝 今日录入":
             _online = online if online is not None else max(_amt - _cash, 0)
             _fmt = lambda v: int(v) if float(v) == int(v) else round(v, 2)
             _msg = (f"{date_str}，线上{_fmt(_online)}，现金{_fmt(_cash)}，"
-                    f"营业额一共{_fmt(_amt)}，提成{_fmt(_wage_calc)}，"
+                    f"营业额一共{_fmt(_amt)}，{_fmt(_amt)}*0.2+120={_fmt(_wage_calc)}，"
+                    f"提成{_fmt(_wage_calc)}，"
                     f"去掉现金{_fmt(_cash)}你自己留着，线上结算{_fmt(_wage_calc - _cash)}")
             st.markdown("**📋 结算文本（点右上角图标一键复制）：**")
             st.code(_msg, language=None)
